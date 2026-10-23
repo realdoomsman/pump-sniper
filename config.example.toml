@@ -1,0 +1,121 @@
+# Copy to config.toml and edit. Every value here is the built-in default.
+#
+#   cargo run --release -- explain          # show the effective settings
+#   cargo run --release -- scan             # watch 30s, list curves near graduation
+#   cargo run --release -- run              # paper trade
+#
+# Live mode is refused unless ALL of these hold:
+#   mode = "live", i_understand_this_spends_real_money = true,
+#   keypair_path is set, and rpc.http is not the public endpoint.
+
+mode = "paper"
+i_understand_this_spends_real_money = false
+# keypair_path = "C:/path/to/id.json"
+
+[rpc]
+# Public endpoints are fine for `scan` and paper mode and useless for anything else.
+# For live: a Helius / QuickNode / Triton key with a websocket that carries
+# programSubscribe. Latency here is most of your edge.
+http = "https://api.mainnet-beta.solana.com"
+ws = "wss://api.mainnet-beta.solana.com"
+# Set this to submit as an atomic bundle instead of a bare transaction. A bundle
+# that would fail is dropped whole, so a miss costs nothing - not even the tip.
+# jito_block_engine = "https://mainnet.block-engine.jito.wtf"
+# REQUIRED for the completion play. buy+migrate is 1484 bytes without a lookup
+# table and 1115 with one, against a 1232-byte limit. Run `sniper create-alt`.
+# lookup_table = "
+
+[strategy]
+# Widest gap-to-graduation we will close ourselves.
+#
+# CORRECTED. The table that used to sit here was computed against a pool that does
+# not exist: every completion was marked at the "mayhem" price (boost = 0) while
+# also being given the 67.406 SOL reserve of an ordinary pool. No mainnet pool has
+# ever had that combination. Measured over 267 migrations, the regimes are:
+#
+#   is_mayhem_mode   curve raised    pool opens with              discount   n
+#   clear            85.007 SOL      67.406 real + 17.585 boost    0.0244%   190
+#   set              ~0.107 SOL      ~0.116 SOL, no boost          98.53%     76
+#
+# A completion always produces the FIRST row, so there is no opening discount to
+# capture and the completion buy is NOT a premium: marked correctly it comes out
+# flat to slightly positive at every gap. The mayhem row is unreachable - you
+# cannot buy 2 SOL of a pool holding 0.116 SOL.
+#
+# So this number no longer trades premium against triggers. It trades position size
+# against demand quality: a wider gap means more tokens to unload into a pool whose
+# depth is fixed at ~67 SOL, and the mark ignores that impact entirely. Keep it
+# small until `sniper watch-pools` shows real inflow arriving after the open.
+max_gap_lamports = 2000000000
+# Hard ceiling on one completion order.
+max_position_lamports = 45000000000
+
+# --- the demand gate: this is the part the reference wallet does not have ---
+# It fires on curve depth alone, which is how it paid 15.85 SOL to open a pool
+# nobody wanted and lost 5.30 SOL in 24 seconds. We require evidence that money is
+# still flowing in before committing.
+demand_window = 30           # seconds
+min_inflow_lamports = 750000000   # 0.75 SOL must have arrived inside the window
+min_updates = 3              # and across at least this many distinct updates
+max_staleness = 20           # seconds; ignore curves whose state is older
+
+slippage_bps = 1500          # 15%, matching the observed min_tokens_out margin
+
+# The learned veto. Only applies when a model file exists. The model can only ever
+# remove trades the deterministic gates already allowed - it never adds one.
+# Starts permissive; raise it once the weights have been trained on real outcomes.
+min_graduation_prob = 0.15
+
+# Momentum ladder: [lower_lamports, upper_lamports, gross_order_lamports].
+#
+# EMPTY ON PURPOSE. These are the five bands from the reference wallet's own guard
+# payload, and `sniper backtest` over 4,230 recorded curves says they LOSE money:
+# 397 trades, 26.7% hit rate, -108.6 SOL, about -7% per round trip.
+#
+# Uncomment to re-test them yourself - the backtest will tell you the same thing.
+momentum_bands = []
+# momentum_bands = [
+#   [7000000000,  11000000000, 4000000000],
+#   [10000000000, 14000000000, 7000000000],
+#   [12000000000, 16000000000, 4300000000],
+#   [18000000000, 22000000000, 4000000000],
+#   [28000000000, 32000000000, 4000000000],
+# ]
+
+[exit]
+# The reference wallet exits in 4-10 legs over 20-30 seconds. Front-loading matters:
+# its winning trade took 40 of 66 SOL out in the first two legs, while its losing
+# trade dribbled out evenly into no demand and recovered almost nothing.
+tranches = 6
+first_delay_slots = 3
+spacing_slots = 9
+front_load = 1.6
+
+[fees]
+# Tier 0 is the working default. The ladder is for genuinely contested blocks.
+#
+# Evidence: across 79 sampled transactions on the network-wide migration index,
+# the ones that LANDED paid a median 0.000055 SOL fee and a median tip of ZERO.
+# The ones that FAILED paid a median 0.0002 SOL tip and up to 0.5618 SOL. Spending
+# more correlated with losing. Do not raise these without a reason.
+# Compute budget for a single-leg buy or sell.
+cu_limit = 120000
+# Compute budget for the atomic completion (BuyExactSolIn + MigrateV2).
+#
+# This was 260,000 for a single shared value, which is BELOW what a landed
+# MigrateV2 was observed to consume on its own (354,648 CU) - the completion play
+# could never have landed. The wallet we reverse-engineered requested 714,286.
+# Priority fee is charged on what you request, but at tier 0 the headroom costs
+# about 0.000017 SOL, so there is no reason to be tight.
+cu_limit_completion = 600000
+cu_price_tiers = [50000, 500000, 5000000, 50000000]
+tip_tiers = [10000, 1000000, 10000000, 100000000]
+max_fee_fraction = 0.15
+
+[risk]
+max_order_lamports = 45000000000        # 45 SOL
+max_exposure_lamports = 45000000000     # 45 SOL total across open positions
+daily_loss_limit_lamports = 10000000000 # 10 SOL, then the kill switch trips
+max_open_positions = 1                  # one at a time; holds are ~20 seconds
+min_reserve_lamports = 500000000        # keep 0.5 SOL for fees
+max_orders_per_min = 12

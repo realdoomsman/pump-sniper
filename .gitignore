@@ -1,0 +1,14 @@
+target/
+config.toml
+*.json
+!package.json
+build0.log
+
+# local secrets, logs and collected data
+wallet.json
+*.log
+data/
+.env
+.env.*
+!.env.example
+.claude/
